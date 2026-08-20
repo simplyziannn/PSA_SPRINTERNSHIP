@@ -80,11 +80,11 @@ function Sidebar({ activeView, setActiveView, alertCount }) {
   </aside>
 }
 
-function Header({ phase }) {
+function Header({ phase, onOpenPanel, panelOpen, currentMinute, queuedAlerts }) {
   const [clock, setClock] = useState(() => new Date())
   useEffect(() => { const timer = window.setInterval(() => setClock(new Date()), 1000); return () => window.clearInterval(timer) }, [])
   const live = phase === 'complete' ? 'Incident contained' : phase === 'alert' ? 'Operator action required' : phase === 'analyzing' ? 'Agent assessing alert' : phase === 'proposal' ? 'Approval required' : phase === 'error' ? 'Response needs attention' : 'Monitoring live signals'
-  return <header className="topbar"><div><h1>PSA PORT ALERT CONTROL</h1><p>Human-governed incident response across Tuas Terminal</p></div><div className="header-status"><span className={`live-status ${phase}`}><i/>{live}</span><time>{clock.toLocaleTimeString('en-SG', { hour12: false })}<small>SGT</small></time></div></header>
+  return <header className="topbar"><div><h1>PSA PORT ALERT CONTROL</h1><p>Human-governed incident response across Tuas Terminal</p></div><div className="header-actions">{onOpenPanel ? <button className={`panel-toggle ${panelOpen ? 'active' : ''}`} onClick={onOpenPanel} aria-expanded={panelOpen} aria-controls="control-station-drawer"><span><Icon name="simulation" size={16}/><b>Simulation &amp; alerts</b></span><small>{formatSimTime(currentMinute)} · {queuedAlerts} queued</small><strong>{panelOpen ? 'Close' : 'Open'}</strong></button> : null}<div className="header-status"><span className={`live-status ${phase}`}><i/>{live}</span><time>{clock.toLocaleTimeString('en-SG', { hour12: false })}<small>SGT</small></time></div></div></header>
 }
 
 function AlertSystems({ phase, activeEvent, queuedAlerts }) {
@@ -97,7 +97,6 @@ function AlertSystems({ phase, activeEvent, queuedAlerts }) {
     { key: 'critical', label: 'Critical alerts', value: String(criticalCount), detail: criticalActive ? `${criticalCount} require human attention` : 'No unverified hazards', icon: 'alert' },
     { key: 'warning', label: 'Warning alerts', value: warningActive ? String(warningCount) : '2', detail: warningActive ? `${warningCount} new operational ${warningCount === 1 ? 'anomaly' : 'anomalies'}` : '2 monitored deviations', icon: 'incident' },
     { key: 'advisory', label: 'Queued alerts', value: String(queuedAlerts), detail: queuedAlerts ? 'Released by simulation clock' : 'No waiting incidents', icon: 'overview' },
-    { key: 'healthy', label: 'Healthy sensor feeds', value: phase === 'alert' ? '63 / 64' : '64 / 64', detail: phase === 'complete' ? 'Affected feed stabilized' : 'Terminal telemetry online', icon: 'shield' },
   ]
   return <section className="alert-systems" aria-label="Live port alert systems">{cards.map((card) => <article key={card.key} className={`alert-system ${card.key} ${(criticalActive && card.key === 'critical') || (warningActive && card.key === 'warning') ? 'active' : ''}`}><Icon name={card.icon}/><div><span>{card.label}</span><strong>{card.value}</strong><small>{card.detail}</small></div></article>)}</section>
 }
@@ -161,7 +160,7 @@ function EventDrawer({ selectedObject, activeEvent, onSchedule }) {
   const [chosenAction, setChosenAction] = useState(null)
   const [scheduledTime, setScheduledTime] = useState('09:00')
   useEffect(() => { setChosenAction(null) }, [selectedObject?.id])
-  if (!selectedObject) return <section className="event-drawer empty"><strong>Select a port asset</strong><span>Available simulator alerts will appear here.</span></section>
+  if (!selectedObject) return null
   const actions = actionsByType[selectedObject.type] || []
   return <section className="event-drawer"><div><small>SCHEDULE DISRUPTION ON</small><strong>{selectedObject.label}</strong><label>Simulation time<input aria-label="Disruption time" type="time" min="06:00" max="22:00" step="900" value={scheduledTime} onChange={(event) => setScheduledTime(event.target.value)}/></label><button className="schedule-button" disabled={!chosenAction} onClick={() => { onSchedule(chosenAction, scheduledTime); setChosenAction(null) }}>Insert on timeline</button></div><div className="event-options">{actions.map((action) => <button key={action.id} className={chosenAction?.id === action.id || activeEvent?.events?.some((event) => event.action === action.id) ? 'selected' : ''} onClick={() => setChosenAction(action)}><i className={action.severity}/><span><strong>{action.label}</strong><small>{action.detail}</small></span><b>{chosenAction?.id === action.id ? '✓' : '＋'}</b></button>)}</div></section>
 }
@@ -177,6 +176,17 @@ function SimulationTimeline({ currentMinute, playing, playbackRate, scheduledEve
   const maxStack = Math.max(1, ...lanes.values())
   const secondsPerStep = PLAYBACK_INTERVAL_MS / playbackRate / 1000
   return <section className="simulation-timeline" aria-label="Simulation day timeline"><div className="timeline-controls"><button className={`play-button ${playing ? 'playing' : ''}`} onClick={onToggle} aria-label={playing ? 'Pause simulation' : 'Play simulation'}>{playing ? 'Ⅱ' : '▶'}</button><div><span>SIMULATION DAY</span><strong>{formatSimTime(currentMinute)} <small>SGT</small></strong></div><button className="reset-button" onClick={onReset}>Reset day</button><div className="speed-control" role="group" aria-label="Simulation speed"><span>SPEED</span>{PLAYBACK_RATES.map((rate) => <button key={rate} className={playbackRate === rate ? 'active' : ''} aria-label={`Set simulation speed ${rate}x`} onClick={() => onRateChange(rate)}>{rate}×</button>)}</div><small>15 simulated minutes every {secondsPerStep}s · auto-pauses on alerts</small></div><div className="timeline-track" style={{ height: `${56 + (maxStack - 1) * 13}px` }}><div className="timeline-progress" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}/><i className="time-cursor" style={{ left: `${Math.max(0, Math.min(100, progress))}%` }}/>{[6, 10, 14, 18, 22].map((hour) => <span key={hour} className="time-tick" style={{ left: `${((hour * 60 - DAY_START) / (DAY_END - DAY_START)) * 100}%` }}>{String(hour).padStart(2, '0')}:00</span>)}{stackedEvents.map((event) => <button key={event.id} aria-label={`${event.label} at ${event.time}`} className={`timeline-event ${event.severity} ${event.status}`} style={{ left: `${((event.minute - DAY_START) / (DAY_END - DAY_START)) * 100}%`, top: `${29 + event.stackIndex * 13}px` }} onClick={() => event.status === 'detected' && onOpenAlert(event)}><i/><span>{event.time}<b>{event.label}</b>{lanes.get(event.minute) > 1 ? <em>{lanes.get(event.minute)} alerts at this time</em> : null}</span></button>)}</div><div className="timeline-queue">{scheduledEvents.length === 0 ? <span>No disruptions scheduled. Select a port object, choose an alert, and insert it at a time.</span> : stackedEvents.map((event) => <button key={event.id} className={event.status} onClick={() => event.status === 'detected' && onOpenAlert(event)}><time>{event.time}</time><span>{event.object.label}</span><strong>{event.label}</strong><b>{event.status === 'detected' ? 'Open alert' : event.status}</b></button>)}</div></section>
+}
+
+function ControlStationDrawer({ open, onClose, phase, activeEvent, queuedAlerts, currentMinute, playing, playbackRate, scheduledEvents, onToggle, onReset, onRateChange, onOpenAlert }) {
+  if (!open) return null
+  return <>
+    <button className="drawer-scrim" onClick={onClose} aria-label="Close simulation and alerts panel" />
+    <aside id="control-station-drawer" className="control-station-drawer" aria-label="Simulation and alert controls">
+      <header className="drawer-header"><div><span>CONTROL ROOM UTILITIES</span><h2>Simulation &amp; alerts</h2><p>Open only when you need to change the day or inspect the alert queue.</p></div><button onClick={onClose} aria-label="Close simulation and alerts panel">×</button></header>
+      <div className="drawer-body"><AlertSystems phase={phase} activeEvent={activeEvent} queuedAlerts={queuedAlerts}/><SimulationTimeline currentMinute={currentMinute} playing={playing} playbackRate={playbackRate} scheduledEvents={scheduledEvents} onToggle={onToggle} onReset={onReset} onRateChange={onRateChange} onOpenAlert={onOpenAlert}/></div>
+    </aside>
+  </>
 }
 
 function AgentActivityBoard({ phase, activeEvent, proposal, execution, playbook, onOpenPlaybook }) {
@@ -278,6 +288,7 @@ function AuditTimeline({ logs }) {
 
 function App() {
   const [activeView, setActiveView] = useState('overview')
+  const [panelOpen, setPanelOpen] = useState(false)
   const [phase, setPhase] = useState('idle')
   const [selectedObject, setSelectedObject] = useState(null)
   const [activeEvent, setActiveEvent] = useState(null)
@@ -401,7 +412,9 @@ function App() {
 
   const queuedAlerts = scheduledEvents.filter((event) => event.status === 'detected').length
   const activeAlertCount = phase === 'complete' ? queuedAlerts : Math.max(queuedAlerts, activeEvent?.events?.length || (activeEvent ? 1 : 0))
-  return <div className="app-shell"><Sidebar activeView={activeView} setActiveView={setActiveView} alertCount={activeAlertCount}/><main className="main-area"><Header phase={phase}/>{activeView === 'chat' ? <AgentChat phase={phase} activeEvent={activeEvent} proposal={proposal} execution={execution} messages={chatMessages} onBack={() => setActiveView('overview')}/> : activeView === 'playbook' ? <SopPlaybook playbook={playbook} proposal={proposal} execution={execution} onBack={() => setActiveView('overview')}/> : <><AlertSystems phase={phase} activeEvent={activeEvent} queuedAlerts={queuedAlerts}/><SimulationTimeline currentMinute={currentMinute} playing={playing} playbackRate={playbackRate} scheduledEvents={scheduledEvents} onToggle={() => setPlaying((value) => !value)} onReset={resetDay} onRateChange={setPlaybackRate} onOpenAlert={openAlert}/><AgentActivityBoard phase={phase} activeEvent={activeEvent} proposal={proposal} execution={execution} playbook={playbook} onOpenPlaybook={() => setActiveView('playbook')}/><div className="control-layout"><div className="map-column"><PortMap selectedObject={selectedObject} activeEvent={activeEvent} phase={phase} onSelect={selectObject}/><EventDrawer selectedObject={selectedObject} activeEvent={activeEvent} onSchedule={scheduleDisruption}/></div><div className="workflow-rail"><StageStepper phase={phase}/><AlertIntake phase={phase} activeEvent={activeEvent} onVerify={verifyAndInvestigate}/><AgentAssessment phase={phase} proposal={proposal} error={error} onRetry={verifyAndInvestigate}/><ApprovalPanel phase={phase} proposal={proposal} onApprove={approveRecovery} onReject={rejectRecovery}/><ToolExecution phase={phase} proposal={proposal} execution={execution}/><AuditTimeline logs={logs}/></div></div></>}</main></div>
+  const togglePanel = () => setPanelOpen((value) => !value)
+  const setView = (view) => { setActiveView(view); setPanelOpen(false) }
+  return <div className="app-shell"><Sidebar activeView={activeView} setActiveView={setView} alertCount={activeAlertCount}/><main className="main-area"><Header phase={phase} onOpenPanel={activeView === 'overview' ? togglePanel : null} panelOpen={panelOpen} currentMinute={currentMinute} queuedAlerts={queuedAlerts}/>{activeView === 'chat' ? <AgentChat phase={phase} activeEvent={activeEvent} proposal={proposal} execution={execution} messages={chatMessages} onBack={() => setView('overview')}/> : activeView === 'playbook' ? <SopPlaybook playbook={playbook} proposal={proposal} execution={execution} onBack={() => setView('overview')}/> : <><ControlStationDrawer open={panelOpen} onClose={() => setPanelOpen(false)} phase={phase} activeEvent={activeEvent} queuedAlerts={queuedAlerts} currentMinute={currentMinute} playing={playing} playbackRate={playbackRate} scheduledEvents={scheduledEvents} onToggle={() => setPlaying((value) => !value)} onReset={resetDay} onRateChange={setPlaybackRate} onOpenAlert={openAlert}/><AgentActivityBoard phase={phase} activeEvent={activeEvent} proposal={proposal} execution={execution} playbook={playbook} onOpenPlaybook={() => setView('playbook')}/><div className="control-layout"><div className="map-column"><PortMap selectedObject={selectedObject} activeEvent={activeEvent} phase={phase} onSelect={selectObject}/><EventDrawer selectedObject={selectedObject} activeEvent={activeEvent} onSchedule={scheduleDisruption}/></div><div className="workflow-rail"><StageStepper phase={phase}/><AlertIntake phase={phase} activeEvent={activeEvent} onVerify={verifyAndInvestigate}/><AgentAssessment phase={phase} proposal={proposal} error={error} onRetry={verifyAndInvestigate}/><ApprovalPanel phase={phase} proposal={proposal} onApprove={approveRecovery} onReject={rejectRecovery}/><ToolExecution phase={phase} proposal={proposal} execution={execution}/><AuditTimeline logs={logs}/></div></div></>}</main></div>
 }
 
 export default App
