@@ -72,7 +72,7 @@ function Icon({ name, size = 21 }) {
 }
 
 function Sidebar({ activeView, setActiveView, alertCount }) {
-  const nav = [['overview', 'Control station'], ['chat', 'Agent chat'], ['playbook', 'SOP playbook']]
+  const nav = [['overview', 'Control station'], ['chat', 'Agent chat'], ['playbook', 'SOP playbook'], ['audit', 'Audit timeline']]
   return <aside className="sidebar">
     <div className="brand"><span className="brand-orbit">◉</span><span>PSA</span></div>
     <nav aria-label="Main navigation">{nav.map(([id, label]) => <button key={id} aria-label={label} className={activeView === id ? 'nav-item active' : 'nav-item'} onClick={() => setActiveView(id)}><Icon name={id}/><span>{label}</span>{id === 'incident' && alertCount > 0 ? <b>{alertCount}</b> : null}</button>)}</nav>
@@ -141,7 +141,7 @@ function PortMap({ selectedObject, activeEvent, phase, onSelect }) {
     return '+120 boxes'
   }
   return <section className="port-panel" aria-label="Interactive Tuas terminal simulator map">
-    <div className="map-heading"><div><strong>Port map · Tuas Terminal</strong><span>Click an asset to schedule a disruption</span></div><span className="map-live"><i/> LIVE</span></div>
+    <div className="map-heading"><div><strong>Port map · Tuas Terminal</strong><span>Click an asset to schedule a disruption</span></div><span className={`map-live ${activeEvent ? 'map-focus' : ''}`}><i/> {activeEvent ? `FOCUS · ${activeEvent.object?.label || 'affected assets'}` : 'LIVE'}</span></div>
     <div className="legend"><span><i className="dot blue"/>Operational</span><span><i className="dot amber"/>Selected</span><span><i className="dot red"/>Alert</span></div>
     <div className="berths">
       {[
@@ -189,22 +189,33 @@ function ControlStationDrawer({ open, onClose, phase, activeEvent, queuedAlerts,
   </>
 }
 
+function IncidentFocus({ phase, activeEvent, proposal }) {
+  if (!activeEvent) return null
+  const incidents = activeEvent.events || [activeEvent]
+  const focusLabel = incidents.map((incident) => incident.object?.label).filter(Boolean).join(' · ')
+  const state = phase === 'alert' ? 'Operator verification required' : phase === 'analyzing' ? 'Agent assessing incident' : phase === 'proposal' ? 'Human decision required' : phase === 'executing' ? 'Approved recovery executing' : phase === 'complete' ? 'Incident contained' : phase === 'rejected' ? 'Recovery declined' : 'Response needs attention'
+  return <section className={`incident-focus ${activeEvent.severity}`} aria-label="Current incident focus"><div className="incident-focus-main"><div className="incident-focus-meta"><span>CURRENT INCIDENT</span><b>{activeEvent.severity === 'critical' ? 'CRITICAL' : activeEvent.severity === 'warning' ? 'WARNING' : 'ADVISORY'}</b><time>{activeEvent.time}</time></div><h2>{activeEvent.label}</h2><p>{focusLabel || `${incidents.length} affected assets`} · {incidents.length} incident{incidents.length === 1 ? '' : 's'} in current response</p></div><div className="incident-focus-response"><span>RESPONSE STATUS</span><strong>{proposal?.recommendation || state}</strong>{proposal?.confidence ? <small>{Math.round(proposal.confidence * 100)}% agent confidence</small> : <small>Human-governed response workflow</small>}</div></section>
+}
+
 function AgentActivityBoard({ phase, activeEvent, proposal, execution, playbook, onOpenPlaybook }) {
+  const [showTechnical, setShowTechnical] = useState(false)
   const trace = proposal?.trace || []
   const called = (type) => trace.some((item) => item.type === type)
   const processLights = [
-    { key: 'alert', label: 'Alert intake', detail: activeEvent ? `${activeEvent.events?.length || 1} alert${activeEvent.events?.length === 1 ? '' : 's'}` : 'Standby', lit: Boolean(activeEvent) && phase !== 'complete', tone: 'red' },
-    { key: 'signals', label: 'Telemetry', detail: called('inspection') ? `${trace.filter((item) => item.type === 'inspection').length} reads` : 'Standby', lit: called('inspection') && !['executing', 'complete'].includes(phase), tone: 'blue' },
-    { key: 'state', label: 'Port state', detail: called('state') ? 'Loaded' : 'Standby', lit: called('state') && !['executing', 'complete'].includes(phase), tone: 'blue' },
-    { key: 'rag', label: 'SOP RAG', detail: proposal?.ragUsed ? `${proposal.sopReferences?.length || 0} matches` : 'Not called', lit: proposal?.ragUsed && !['executing', 'complete'].includes(phase), tone: 'purple' },
-    { key: 'approval', label: 'Human approval', detail: phase === 'proposal' ? 'Required' : phase === 'executing' ? 'Approved' : 'Locked', lit: ['proposal', 'executing'].includes(phase), tone: 'amber' },
+    { key: 'alert', label: 'Alert intake', detail: activeEvent ? `${activeEvent.events?.length || 1} alert${activeEvent.events?.length === 1 ? '' : 's'}` : 'Waiting for alert', lit: Boolean(activeEvent) && phase !== 'complete', tone: 'red' },
+    { key: 'signals', label: 'Telemetry', detail: called('inspection') ? `${trace.filter((item) => item.type === 'inspection').length} checks` : activeEvent ? 'Ready after verification' : 'Waiting', lit: called('inspection') && !['executing', 'complete'].includes(phase), tone: 'blue' },
+    { key: 'state', label: 'Port state', detail: called('state') ? 'Loaded' : activeEvent ? 'Ready after verification' : 'Waiting', lit: called('state') && !['executing', 'complete'].includes(phase), tone: 'blue' },
+    { key: 'rag', label: 'SOP guidance', detail: proposal?.ragUsed ? `${proposal.sopReferences?.length || 0} matches` : proposal ? 'Not referenced' : 'Waiting', lit: proposal?.ragUsed && !['executing', 'complete'].includes(phase), tone: 'blue' },
+    { key: 'approval', label: 'Human decision', detail: phase === 'proposal' ? 'Action required' : phase === 'executing' ? 'Approved' : phase === 'complete' ? 'Recorded' : 'Waiting', lit: phase === 'proposal', tone: 'amber' },
   ]
   const proposedIds = new Set(proposal?.proposedTools?.map((tool) => tool.id) || [])
   const invokedIds = new Set(execution?.executions?.filter((tool) => tool.status === 'completed').map((tool) => tool.id) || [])
   const activeSopIds = new Set(proposal?.sopReferences?.map((reference) => reference.id) || [])
   const tools = playbook.tools.length ? playbook.tools : Array.from({ length: 12 }, (_, index) => ({ id: `tool_${String(index + 1).padStart(2, '0')}`, number: String(index + 1).padStart(2, '0'), name: 'Operational channel' }))
   const matchedSops = playbook.entries.filter((entry) => activeSopIds.has(entry.id))
-  return <section className="annunciator-board" aria-label="Agent activity board"><header><div><span>LIVE AGENT I/O</span><h3>Agent activity board</h3></div><div className="board-legend"><span><i className="red"/>Alert</span><span><i className="blue"/>Diagnostic</span><span><i className="purple"/>RAG</span><span><i className="amber"/>Approval</span><span><i className="green"/>Tool</span></div></header><div className="board-surface"><div className="process-bank">{processLights.map((node) => <article key={node.key} className={`board-channel ${node.lit ? 'lit' : ''} ${node.tone}`}><div><strong>{node.label}</strong><small>{node.detail}</small></div><i className="board-lamp" aria-label={`${node.label}: ${node.lit ? 'active' : 'inactive'}`}/></article>)}</div><div className="tool-bank"><div className="bank-label"><span>OPERATIONAL TOOL CHANNELS</span><small>Green = endpoint invoked · Amber ring = proposed</small></div>{tools.map((tool) => {
+  const activityTitle = phase === 'idle' ? 'System ready' : phase === 'alert' ? 'Operator verification required' : phase === 'analyzing' ? 'Agent assessing incident' : phase === 'proposal' ? 'Human decision required' : phase === 'executing' ? 'Approved recovery executing' : phase === 'complete' ? 'Incident contained' : phase === 'rejected' ? 'Recovery declined' : 'Response needs attention'
+  const activityDetail = activeEvent ? `${activeEvent.label} · ${activeEvent.object?.label || `${activeEvent.events?.length || 1} affected assets`}` : 'Monitoring telemetry and awaiting alerts.'
+  return <section className={`annunciator-board ${showTechnical ? 'technical-open' : ''}`} aria-label="Agent activity board"><header><div><span>AGENT ACTIVITY</span><h3>{activeEvent ? 'Incident response activity' : 'System activity'}</h3></div><div className="board-header-actions"><div className="board-legend"><span><i className="blue"/>Normal</span><span><i className="amber"/>Attention</span><span><i className="green"/>Complete</span><span><i className="red"/>Incident</span></div><button className="technical-toggle" onClick={() => setShowTechnical((value) => !value)} aria-expanded={showTechnical}>{showTechnical ? 'Hide technical details' : 'View technical details'} <span>{showTechnical ? '⌃' : '⌄'}</span></button></div></header>{showTechnical ? <div className="board-surface"><div className="process-bank">{processLights.map((node) => <article key={node.key} className={`board-channel ${node.lit ? 'lit' : ''} ${node.tone}`}><div><strong>{node.label}</strong><small>{node.detail}</small></div><i className="board-lamp" aria-label={`${node.label}: ${node.lit ? 'active' : 'inactive'}`}/></article>)}</div><div className="tool-bank"><div className="bank-label"><span>OPERATIONAL TOOL CHANNELS</span><small>Green = completed · Amber = proposed</small></div>{tools.map((tool) => {
     const linkedSops = matchedSops.filter((entry) => entry.toolIds.includes(tool.id))
     const invoked = invokedIds.has(tool.id) || (phase === 'executing' && proposedIds.has(tool.id))
     const armed = proposedIds.has(tool.id) && !invoked
@@ -213,19 +224,19 @@ function AgentActivityBoard({ phase, activeEvent, proposal, execution, playbook,
     const selected = entry.toolIds.filter((id) => proposedIds.has(id))
     const matched = selected.length === entry.toolIds.length
     return <article key={entry.id} className={matched ? 'matched' : 'mismatch'}><div><b>{entry.id}</b><strong>{entry.title}</strong></div><p>Required: {entry.toolIds.map((id) => id.match(/tool_(\d+)/)?.[1]).join(', ')}</p><small>{matched ? '✓ Agent tool selection matches SOP' : `${selected.length}/${entry.toolIds.length} required tools selected`}</small></article>
-  }) : <div className="readout-empty"><i/><p>No SOP linked yet</p><small>The RAG channel will populate this board after investigation.</small></div>}<button onClick={onOpenPlaybook}>Open full SOP playbook →</button></aside></div></section>
+  }) : <div className="readout-empty"><i/><p>No relevant SOP yet</p><small>Relevant SOPs will appear here once the incident is analysed.</small></div>}<button onClick={onOpenPlaybook}>Open full SOP playbook →</button></aside></div> : <div className="agent-summary"><div className={`agent-summary-focus ${activeEvent ? `focus-${phase}` : 'ready'}`}><i/><div><span>{activeEvent ? 'CURRENT RESPONSE' : 'SYSTEM READY'}</span><strong>{activityTitle}</strong><small>{activityDetail}</small></div></div><div className="agent-summary-grid">{processLights.map((node) => <article key={node.key} className={`${node.lit ? 'lit' : ''} ${node.tone}`}><i className="summary-dot"/><div><strong>{node.label}</strong><span>{node.detail}</span></div>{node.lit ? <b>Live</b> : null}</article>)}</div></div>}</section>
 }
 
 function StageStepper({ phase }) {
   const phaseIndex = { idle: -1, alert: 0, analyzing: 2, proposal: 3, executing: 4, complete: 5, rejected: 3, error: 2 }[phase] ?? -1
-  return <div className="stage-stepper" aria-label="Response workflow">{stages.map(([id, label], index) => <div key={id} className={`${index <= phaseIndex ? 'reached' : ''} ${index === phaseIndex ? 'current' : ''}`}><i>{index + 1}</i><span>{label}</span></div>)}</div>
+  return <div className="stage-stepper" aria-label="Response workflow">{stages.map(([id, label], index) => { const completed = phase === 'complete' || index < phaseIndex; const current = index === phaseIndex; return <div key={id} className={`${completed ? 'completed' : ''} ${current ? 'current' : ''} ${!completed && !current ? 'future' : ''}`}><i>{completed ? '✓' : current ? '●' : index + 1}</i><span>{label}</span></div> })}</div>
 }
 
 function AlertIntake({ phase, activeEvent, onVerify }) {
-  if (!activeEvent) return <section className="workflow-section alert-intake empty"><div className="section-number">1</div><div><h3>Live alert intake</h3><p>No probable incident is awaiting verification.</p></div></section>
+  if (!activeEvent) return <section className="workflow-section alert-intake empty"><div className="section-number">1</div><div><h3>Live alert intake</h3><p>System ready. Monitoring telemetry and awaiting alerts.</p></div></section>
   const verified = !['alert'].includes(phase)
   const incidents = activeEvent.events || [activeEvent]
-  return <section className={`workflow-section alert-intake ${activeEvent.severity}`}><div className="section-number">1</div><div className="alert-symbol"><Icon name="alert" size={28}/></div><div className="alert-copy"><h3>{activeEvent.label}</h3><strong>{verified ? 'Verified by operator' : `${incidents.length} issue${incidents.length === 1 ? '' : 's'} require human verification`}</strong><div className="alert-batch-list">{incidents.map((incident) => <p key={incident.id}><b>{incident.label}</b><span>{incident.object.label} · {incident.time}</span></p>)}</div></div>{phase === 'alert' ? <button className="verify-button" onClick={onVerify}>Verify &amp; send {incidents.length} alert{incidents.length === 1 ? '' : 's'} to agent</button> : <span className="verified-mark">✓ Sent</span>}</section>
+  return <section className={`workflow-section alert-intake ${activeEvent.severity} ${phase === 'alert' ? 'current-step' : 'completed-step'}`}><div className="section-number">1</div><div className="alert-symbol"><Icon name="alert" size={28}/></div><div className="alert-copy"><h3>{activeEvent.label}</h3><strong>{verified ? 'Verified by operator' : `${incidents.length} issue${incidents.length === 1 ? '' : 's'} require human verification`}</strong><div className="alert-batch-list">{incidents.map((incident) => <p key={incident.id}><b>{incident.label}</b><span>{incident.object.label} · {incident.time}</span></p>)}</div></div>{phase === 'alert' ? <button className="verify-button" onClick={onVerify}>Verify incident</button> : <span className="verified-mark">✓ Sent</span>}</section>
 }
 
 function AgentChat({ phase, activeEvent, proposal, execution, messages, onBack }) {
@@ -254,27 +265,30 @@ function SopPlaybook({ playbook, proposal, execution, onBack }) {
 function AgentAssessment({ phase, proposal, error, onRetry }) {
   const waiting = ['idle', 'alert'].includes(phase)
   const status = phase === 'analyzing' ? 'Analyzing port state…' : phase === 'error' ? 'Agent request failed' : proposal ? `${Math.round(proposal.confidence * 100)}% confidence` : 'Waiting'
-  return <section className="workflow-section agent-assessment"><div className="section-number">2</div><div className="section-body"><div className="section-title"><h3>Agent assessment</h3><span>{status}</span></div>
-    {waiting ? <p className="muted-copy">The agent is not called until the simulation clock releases an alert and an operator verifies it.</p> : phase === 'analyzing' ? <div className="agent-loading"><i/><p>Inspecting telemetry and port state, then retrieving the relevant SOP playbook procedure.</p></div> : error ? <div className="agent-error-state"><p className="error-copy">{error}</p><button onClick={onRetry}>Retry agent investigation</button></div> : proposal ? <><strong className="proposal-label">Proposed recovery</strong><h4>{proposal.diagnosis}</h4><p>{proposal.recommendation}</p>{proposal.sopReferences?.length ? <div className="sop-references"><span>RAG SOURCES</span>{proposal.sopReferences.map((reference) => <b key={reference.id}>{reference.id} · {reference.title.replace(`${reference.id} `, '')}</b>)}</div> : null}<details><summary>Why the agent chose this response</summary><p>{proposal.reasoning}</p></details></> : null}
+  return <section className={`workflow-section agent-assessment ${phase === 'analyzing' ? 'current-step' : ''} ${proposal ? 'completed-step' : ''}`}><div className="section-number">2</div><div className="section-body"><div className="section-title"><h3>Agent assessment</h3><span>{status}</span></div>
+    {waiting ? <p className="muted-copy">Waiting for operator verification.</p> : phase === 'analyzing' ? <div className="agent-loading"><i/><p>Analyzing telemetry, port state, and relevant SOP guidance.</p></div> : error ? <div className="agent-error-state"><p className="error-copy">{error}</p><button onClick={onRetry}>Retry agent investigation</button></div> : proposal ? <><strong className="proposal-label">Proposed recovery</strong><h4>{proposal.diagnosis}</h4><p>{proposal.recommendation}</p>{proposal.sopReferences?.length ? <div className="sop-references"><span>RAG SOURCES</span>{proposal.sopReferences.map((reference) => <b key={reference.id}>{reference.id} · {reference.title.replace(`${reference.id} `, '')}</b>)}</div> : null}<details><summary>Why the agent chose this response</summary><p>{proposal.reasoning}</p></details></> : null}
   </div></section>
 }
 
 function ApprovalPanel({ phase, proposal, onApprove, onReject }) {
   const approvalCopy = phase === 'complete'
-    ? 'The approved minimum-safe tool plan was dispatched and recorded in the audit trail.'
+    ? 'Recovery executed and recorded in the audit trail.'
     : phase === 'rejected'
-      ? 'The plan was rejected. No operational endpoint was invoked.'
-      : 'Operational endpoints remain blocked until an operator approves the agent’s exact tool plan.'
-  return <section className="workflow-section approval-panel"><div className="section-number">3</div><div className="section-body"><div className="section-title"><h3>Human approval</h3><span>{phase === 'proposal' ? 'Awaiting decision' : phase === 'complete' ? 'Approved' : phase === 'rejected' ? 'Rejected' : 'Locked'}</span></div>
+      ? 'Recovery rejected; no operational endpoints invoked.'
+      : phase === 'proposal'
+        ? 'Review the agent’s proposed recovery before any endpoint is invoked.'
+        : 'Waiting for the agent’s recommendation.'
+  return <section className={`workflow-section approval-panel ${phase === 'proposal' ? 'current-step decision-required' : ''} ${phase === 'complete' ? 'completed-step' : ''}`}><div className="section-number">3</div><div className="section-body"><div className="section-title"><h3>Human decision</h3><span>{phase === 'proposal' ? 'Decision required' : phase === 'complete' ? 'Approved' : phase === 'rejected' ? 'Rejected' : 'Waiting'}</span></div>
     <p className="muted-copy">{approvalCopy}</p>
-    <div className="approval-actions"><button className="approve-button" disabled={phase !== 'proposal' || !proposal} onClick={onApprove}>✓ Approve recovery</button><button className="reject-button" disabled={phase !== 'proposal'} onClick={onReject}>Reject</button></div>
+    {proposal ? <div className="decision-summary"><span>AGENT RECOMMENDS</span><strong>{proposal.recommendation}</strong>{proposal.sopReferences?.length ? <small>Based on {proposal.sopReferences.map((reference) => reference.id).join(' · ')}</small> : null}</div> : null}
+    <div className="approval-actions"><button className="approve-button" disabled={phase !== 'proposal' || !proposal} onClick={onApprove}>✓ Approve &amp; execute</button><button className="reject-button" disabled={phase !== 'proposal'} onClick={onReject}>Reject recovery</button></div>
   </div></section>
 }
 
 function ToolExecution({ phase, proposal, execution }) {
   const tools = proposal?.proposedTools || []
-  return <section className="workflow-section tool-execution"><div className="section-number">4</div><div className="section-body"><div className="section-title"><h3>Operational tool execution</h3><span>{phase === 'executing' ? 'Invoking…' : phase === 'complete' ? 'Completed' : 'Approval gated'}</span></div>
-    {tools.length === 0 ? <p className="muted-copy">No operational endpoint has been selected or invoked.</p> : <div className="tool-table" role="table" aria-label="Operational endpoints"><div className="tool-row tool-head" role="row"><span>Tool / endpoint</span><span>Status</span><span>Output</span></div>{tools.map((tool) => {
+  return <section className={`workflow-section tool-execution ${phase === 'executing' ? 'current-step' : ''} ${phase === 'complete' ? 'completed-step' : ''}`}><div className="section-number">4</div><div className="section-body"><div className="section-title"><h3>Operational tool execution</h3><span>{phase === 'executing' ? 'Invoking…' : phase === 'complete' ? 'Completed' : 'Approval gated'}</span></div>
+    {tools.length === 0 ? <p className="muted-copy">{phase === 'proposal' ? 'Waiting for human approval.' : 'Waiting for approved recovery.'}</p> : <div className="tool-table" role="table" aria-label="Operational endpoints"><div className="tool-row tool-head" role="row"><span>Tool / endpoint</span><span>Status</span><span>Output</span></div>{tools.map((tool) => {
       const result = execution?.executions?.find((item) => item.id === tool.id)
       const status = result?.status === 'completed' ? 'Completed' : result?.status === 'rejected' ? 'Rejected' : phase === 'executing' ? 'Invoking' : 'Not invoked'
       return <div className="tool-row" role="row" key={tool.id}><div><b>Tool {tool.number} · {tool.name}</b><code>{tool.endpoint}</code></div><span className={`tool-status ${status.toLowerCase().replace(' ', '-')}`}><i/>{status}</span><p>{result?.output || (phase === 'proposal' ? 'Awaiting human approval' : '—')}</p></div>
@@ -282,8 +296,12 @@ function ToolExecution({ phase, proposal, execution }) {
   </div></section>
 }
 
-function AuditTimeline({ logs }) {
-  return <section className="audit-timeline"><div className="section-title"><h3>Audit timeline</h3><span>{logs.length} events</span></div><div>{logs.map((log) => <article key={log.id}><i className={log.tone}/><time>{log.time}</time><span>{log.message}</span></article>)}</div></section>
+function AuditTimeline({ logs, standalone = false }) {
+  return <section className={`audit-timeline ${standalone ? 'standalone' : ''}`}><div className="section-title"><h3>{standalone ? 'Event stream' : 'Audit timeline'}</h3><span>{logs.length} events</span></div><div>{logs.map((log) => <article key={log.id}><i className={log.tone}/><time>{log.time}</time><span>{log.message}</span></article>)}</div></section>
+}
+
+function AuditView({ logs }) {
+  return <section className="audit-view" aria-label="Audit timeline view"><header><div><span>AUDIT TRAIL</span><h2>Audit timeline</h2><p>Operator actions, agent decisions, and endpoint activity recorded in sequence.</p></div><div className="audit-view-summary"><strong>{logs.length}</strong><span>recorded events</span></div></header><AuditTimeline logs={logs} standalone/></section>
 }
 
 function App() {
@@ -414,7 +432,7 @@ function App() {
   const activeAlertCount = phase === 'complete' ? queuedAlerts : Math.max(queuedAlerts, activeEvent?.events?.length || (activeEvent ? 1 : 0))
   const togglePanel = () => setPanelOpen((value) => !value)
   const setView = (view) => { setActiveView(view); setPanelOpen(false) }
-  return <div className="app-shell"><Sidebar activeView={activeView} setActiveView={setView} alertCount={activeAlertCount}/><main className="main-area"><Header phase={phase} onOpenPanel={activeView === 'overview' ? togglePanel : null} panelOpen={panelOpen} currentMinute={currentMinute} queuedAlerts={queuedAlerts}/>{activeView === 'chat' ? <AgentChat phase={phase} activeEvent={activeEvent} proposal={proposal} execution={execution} messages={chatMessages} onBack={() => setView('overview')}/> : activeView === 'playbook' ? <SopPlaybook playbook={playbook} proposal={proposal} execution={execution} onBack={() => setView('overview')}/> : <><ControlStationDrawer open={panelOpen} onClose={() => setPanelOpen(false)} phase={phase} activeEvent={activeEvent} queuedAlerts={queuedAlerts} currentMinute={currentMinute} playing={playing} playbackRate={playbackRate} scheduledEvents={scheduledEvents} onToggle={() => setPlaying((value) => !value)} onReset={resetDay} onRateChange={setPlaybackRate} onOpenAlert={openAlert}/><AgentActivityBoard phase={phase} activeEvent={activeEvent} proposal={proposal} execution={execution} playbook={playbook} onOpenPlaybook={() => setView('playbook')}/><div className="control-layout"><div className="map-column"><PortMap selectedObject={selectedObject} activeEvent={activeEvent} phase={phase} onSelect={selectObject}/><EventDrawer selectedObject={selectedObject} activeEvent={activeEvent} onSchedule={scheduleDisruption}/></div><div className="workflow-rail"><StageStepper phase={phase}/><AlertIntake phase={phase} activeEvent={activeEvent} onVerify={verifyAndInvestigate}/><AgentAssessment phase={phase} proposal={proposal} error={error} onRetry={verifyAndInvestigate}/><ApprovalPanel phase={phase} proposal={proposal} onApprove={approveRecovery} onReject={rejectRecovery}/><ToolExecution phase={phase} proposal={proposal} execution={execution}/><AuditTimeline logs={logs}/></div></div></>}</main></div>
+  return <div className="app-shell"><Sidebar activeView={activeView} setActiveView={setView} alertCount={activeAlertCount}/><main className="main-area"><Header phase={phase} onOpenPanel={activeView === 'overview' ? togglePanel : null} panelOpen={panelOpen} currentMinute={currentMinute} queuedAlerts={queuedAlerts}/>{activeView === 'chat' ? <AgentChat phase={phase} activeEvent={activeEvent} proposal={proposal} execution={execution} messages={chatMessages} onBack={() => setView('overview')}/> : activeView === 'playbook' ? <SopPlaybook playbook={playbook} proposal={proposal} execution={execution} onBack={() => setView('overview')}/> : activeView === 'audit' ? <AuditView logs={logs}/> : <><ControlStationDrawer open={panelOpen} onClose={() => setPanelOpen(false)} phase={phase} activeEvent={activeEvent} queuedAlerts={queuedAlerts} currentMinute={currentMinute} playing={playing} playbackRate={playbackRate} scheduledEvents={scheduledEvents} onToggle={() => setPlaying((value) => !value)} onReset={resetDay} onRateChange={setPlaybackRate} onOpenAlert={openAlert}/><IncidentFocus phase={phase} activeEvent={activeEvent} proposal={proposal}/><AgentActivityBoard phase={phase} activeEvent={activeEvent} proposal={proposal} execution={execution} playbook={playbook} onOpenPlaybook={() => setView('playbook')}/><div className="control-layout"><div className="map-column"><PortMap selectedObject={selectedObject} activeEvent={activeEvent} phase={phase} onSelect={selectObject}/><EventDrawer selectedObject={selectedObject} activeEvent={activeEvent} onSchedule={scheduleDisruption}/></div><div className="workflow-rail"><StageStepper phase={phase}/><AlertIntake phase={phase} activeEvent={activeEvent} onVerify={verifyAndInvestigate}/><AgentAssessment phase={phase} proposal={proposal} error={error} onRetry={verifyAndInvestigate}/><ApprovalPanel phase={phase} proposal={proposal} onApprove={approveRecovery} onReject={rejectRecovery}/><ToolExecution phase={phase} proposal={proposal} execution={execution}/></div></div></>}</main></div>
 }
 
 export default App
