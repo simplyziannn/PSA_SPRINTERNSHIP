@@ -405,6 +405,9 @@ function App() {
       const response = await fetch('/api/agent/investigate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ incidents: incidents.map((event) => ({ object: event.object, action: event.action })) }) })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.error || 'Agent investigation failed')
+      if (!['confirmed', 'false_alarm', 'inconclusive'].includes(payload.classification)) {
+        throw new Error('The backend is running an older workflow version. Stop the current dev processes and restart npm run dev, then retry the investigation.')
+      }
       setProposal(payload); setPhase('assessment'); updateScheduledStatuses(incidents.map((event) => event.id), 'assessment')
       setLogs((current) => [...current, ...payload.trace.map((item) => makeLog(item.label, item.type === 'proposal' || item.type === 'rag' ? 'green' : 'blue')), makeLog(`Agent classified alert as ${payload.classification.replace('_', ' ')}; awaiting human disposition`, 'amber')])
       setChatMessages((current) => [...current, { id: crypto.randomUUID(), role: 'agent', time: formatSimTime(currentMinute), body: `Classification: ${payload.classification.replace('_', ' ')} (${Math.round(payload.confidence * 100)}% confidence)\n\n${payload.diagnosis}\n\nRecommendation: ${payload.recommendation}`, tools: payload.proposedTools }])

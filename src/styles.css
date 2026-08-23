@@ -22,6 +22,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--bg); }
 button { font: inherit; }
 button:focus-visible { outline: 2px solid #72d4ff; outline-offset: 2px; }
 button:disabled { cursor: not-allowed; }
+.app-crash-state { min-height: 100vh; padding: 24px; display: grid; place-items: center; background: #071322; }.app-crash-state section { width: min(560px, 100%); padding: 28px; border: 1px solid #7f3f3c; border-radius: 5px; background: #17191f; box-shadow: 0 18px 60px #0008; }.app-crash-state span { color: #ff827b; font-size: 9px; font-weight: 800; letter-spacing: 1px; }.app-crash-state h1 { margin: 10px 0 8px; color: #f4f8fb; font-size: 22px; }.app-crash-state p { color: #ffb5b0; line-height: 1.5; }.app-crash-state button { height: 36px; margin-top: 12px; padding: 0 14px; border: 1px solid #4daee2; border-radius: 3px; background: #12486a; color: #e1f5ff; font-weight: 750; cursor: pointer; }.app-crash-state small { display: block; margin-top: 16px; color: #8fa5b7; line-height: 1.5; }.app-crash-state code { color: #bdeaff; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 176px minmax(0, 1fr); background: radial-gradient(circle at 64% 12%, #0a2540 0, var(--bg) 40%); }
 .sidebar { position: sticky; top: 0; height: 100vh; background: linear-gradient(180deg, #09233c, #07192b); border-right: 1px solid #173853; display: flex; flex-direction: column; z-index: 10; }
