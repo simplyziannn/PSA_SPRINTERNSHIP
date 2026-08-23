@@ -36,10 +36,14 @@ app.post('/api/agent/investigate', async (request, response) => {
   }
   const events = requestedIncidents.map(({ object, action }) => buildEvent(object, action))
   if (events.some((event) => !event)) return response.status(400).json({ error: 'Unsupported simulator event.' })
+  const batchClassification = events.some((event) => event.expectedClassification === 'confirmed')
+    ? 'confirmed'
+    : events.some((event) => event.expectedClassification === 'inconclusive') ? 'inconclusive' : 'false_alarm'
   const event = events.length === 1 ? events[0] : {
     label: `${events.length} concurrent port incidents`,
     object: { type: 'batch', id: `batch-${events.length}`, label: `${events.length} affected port assets` },
     events,
+    expectedClassification: batchClassification,
     requiredToolIds: [...new Set(events.flatMap((item) => item.requiredToolIds))],
     signals: events.flatMap((item, eventIndex) => item.signals.map((signal) => ({
       ...signal,
@@ -56,7 +60,7 @@ app.post('/api/agent/investigate', async (request, response) => {
   try {
     const result = await investigateAlert(event)
     const proposalId = randomUUID()
-    pendingProposals.set(proposalId, { event, result, createdAt: Date.now() })
+    pendingProposals.set(proposalId, { event, result, disposition: null, createdAt: Date.now() })
     return response.json({ proposalId, event: { label: event.label, incidents: events.map((item) => ({ label: item.label, affectedObject: item.object })), signals: event.signals.map(({ id, label, preview }) => ({ id, label, preview })) }, ...result })
   } catch (error) {
     console.error('Agent request failed:', error)
@@ -64,11 +68,36 @@ app.post('/api/agent/investigate', async (request, response) => {
   }
 })
 
+app.post('/api/agent/disposition', (request, response) => {
+  const { proposalId, disposition } = request.body || {}
+  if (!['confirmed', 'false_alarm', 'inconclusive'].includes(disposition)) {
+    return response.status(400).json({ error: 'Disposition must be confirmed, false_alarm, or inconclusive.' })
+  }
+  const pending = pendingProposals.get(proposalId)
+  if (!pending) return response.status(404).json({ error: 'The alert assessment was not found or has expired.' })
+
+  pending.disposition = disposition
+  pending.dispositionAt = new Date().toISOString()
+  const recoveryReady = disposition === 'confirmed' && pending.result.proposedTools.length > 0
+  if (disposition !== 'confirmed' || !recoveryReady) pendingProposals.delete(proposalId)
+  return response.json({
+    ok: true,
+    disposition,
+    recoveryReady,
+    requiresFurtherInspection: disposition === 'inconclusive' || (disposition === 'confirmed' && !recoveryReady),
+    operationalEndpointsInvoked: 0,
+  })
+})
+
 app.post('/api/agent/execute', async (request, response) => {
   const { proposalId, approved } = request.body || {}
   if (!approved) return response.status(400).json({ error: 'Explicit human approval is required before operational tools can run.' })
   const pending = pendingProposals.get(proposalId)
   if (!pending) return response.status(404).json({ error: 'The approved proposal was not found or has expired.' })
+  if (pending.disposition !== 'confirmed') return response.status(409).json({ error: 'A human must confirm the incident before recovery can be approved.' })
+  if (pending.result.classification !== 'confirmed' || pending.result.proposedTools.length === 0) {
+    return response.status(409).json({ error: 'The confirmed incident does not have an executable recovery plan. Request further investigation.' })
+  }
 
   try {
     const toolIds = pending.result.proposedTools.map((tool) => tool.id)

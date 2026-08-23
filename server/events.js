@@ -38,6 +38,21 @@ const eventTemplates = {
       ['peer_cranes', 'Adjacent cranes', 'Normal', 'QC peers on a separate bus show no interruption.'],
     ],
   },
+  crane_sensor_false_alarm: {
+    sopId: 'SOP-03',
+    label: 'Hydraulic sensor disagreement',
+    diagnosis: 'A drifting pressure transducer generated a nuisance alert while the redundant channel and crane performance remained healthy',
+    solutionId: null,
+    solution: 'Close the alert as a false alarm and raise a non-operational sensor calibration work order',
+    expectedClassification: 'false_alarm',
+    requiredToolIds: [],
+    signals: [
+      ['hydraulic_primary', 'Primary pressure sensor', '171 bar', 'The primary transducer reports 171 bar but its reading is fixed and does not change with hoist load.'],
+      ['hydraulic_redundant', 'Redundant pressure sensor', '246 bar normal', 'The independent redundant channel remains stable between 242 and 249 bar under lifting load.'],
+      ['cycle_time', 'Cycle time', 'Normal', 'Crane cycle time remains inside its 96â€“104 second operating band.'],
+      ['motor_current', 'Hoist motor current', 'Normal', 'Motor current and thermal protection remain healthy across six lifts.'],
+    ],
+  },
   vessel_late_arrival: {
     sopId: 'SOP-05',
     label: 'Late vessel arrival',
@@ -108,6 +123,21 @@ const eventTemplates = {
       ['leak_sensor', 'Ground sensor', 'No leak detected', 'No liquid or vapour is currently detected beneath the slot.'],
     ],
   },
+  container_damage_inconclusive: {
+    sopId: 'SOP-02',
+    label: 'Unconfirmed container damage',
+    diagnosis: 'The vision alert cannot be confirmed or dismissed because the camera view is obstructed and lift telemetry is unavailable',
+    solutionId: null,
+    solution: 'Request an on-site inspection before classifying the alert or authorising operational recovery',
+    expectedClassification: 'inconclusive',
+    requiredToolIds: [],
+    signals: [
+      ['vision_damage', 'Vision inspection', 'Possible deformation', 'The model reports possible sidewall deformation, but 41% of the container is obscured by the spreader.'],
+      ['camera_quality', 'Camera quality', 'Obstructed', 'Rain droplets and glare reduce image confidence below the confirmation threshold.'],
+      ['weight_sensor', 'Lift weight', 'Unavailable', 'No usable spreader load-cell reading exists for this container movement.'],
+      ['leak_sensor', 'Ground sensor', 'No leak detected', 'No liquid or vapour is detected, which does not rule out structural damage.'],
+    ],
+  },
   container_reefer_alarm: {
     sopId: 'SOP-07',
     label: 'Reefer temperature alarm',
@@ -143,6 +173,7 @@ export function buildEvent(object, action) {
   if (!template) return null
   return {
     ...template,
+    expectedClassification: template.expectedClassification || 'confirmed',
     object,
     signals: template.signals.map(([id, label, preview, detail]) => ({ id, label, preview, detail })),
     dependencies: {

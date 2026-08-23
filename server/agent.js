@@ -27,10 +27,11 @@ const investigationTools = [
   },
   {
     type: 'function', name: 'submit_recommendation',
-    description: 'Return a diagnosis and proposed operational tool plan for human approval. This does not invoke any operational endpoint.',
+    description: 'Return an alert classification, diagnosis, evidence, and any proposed operational tool plan for human review. This does not invoke any operational endpoint.',
     parameters: {
       type: 'object',
       properties: {
+        classification: { type: 'string', enum: ['confirmed', 'false_alarm', 'inconclusive'] },
         diagnosis: { type: 'string' },
         confidence: { type: 'number' },
         evidence: { type: 'array', items: { type: 'string' } },
@@ -38,7 +39,7 @@ const investigationTools = [
         recommendation: { type: 'string' },
         tool_ids: { type: 'array', items: { type: 'string', enum: operationalToolIds } },
       },
-      required: ['diagnosis', 'confidence', 'evidence', 'reasoning', 'recommendation', 'tool_ids'],
+      required: ['classification', 'diagnosis', 'confidence', 'evidence', 'reasoning', 'recommendation', 'tool_ids'],
       additionalProperties: false,
     }, strict: true,
   },
@@ -94,7 +95,12 @@ function executeInvestigationTool(event, call, state) {
     if (state.inspected.size < 2 || !state.readPortState || !state.ragUsed) {
       return { ok: false, accepted: false, error: 'Inspect at least two signals, read current port state, and retrieve the relevant SOP before proposing a response.' }
     }
-    const required = [...event.requiredToolIds].sort()
+    const expectedClassification = event.expectedClassification || 'confirmed'
+    if (args.classification !== expectedClassification) {
+      state.trace.push({ type: 'warning', label: 'Classification challenged', detail: 'The classification did not match the available corroborating evidence.' })
+      return { ok: false, accepted: false, error: 'Reassess the alert classification against the inspected signals. Distinguish a confirmed incident from a false alarm or an inconclusive alert.' }
+    }
+    const required = expectedClassification === 'confirmed' ? [...event.requiredToolIds].sort() : []
     const proposed = [...new Set(args.tool_ids)].sort()
     const minimumSafePlan = required.length === proposed.length && required.every((id, index) => id === proposed[index])
     if (!minimumSafePlan) {
@@ -102,8 +108,8 @@ function executeInvestigationTool(event, call, state) {
       return { ok: false, accepted: false, error: 'The simulator rejected this as the minimum safe tool plan. Reassess the evidence and submit only the endpoints necessary for immediate containment; do not include follow-up actions described as optional or as-needed.' }
     }
     state.proposal = args
-    state.trace.push({ type: 'proposal', label: 'Recommendation prepared', detail: `${args.tool_ids.length} operational endpoints proposed; none invoked.` })
-    return { ok: true, accepted: true, requires_human_approval: true, operational_endpoints_invoked: 0 }
+    state.trace.push({ type: 'proposal', label: 'Alert assessment prepared', detail: `${args.classification.replace('_', ' ')} classification; ${args.tool_ids.length} operational endpoints proposed.` })
+    return { ok: true, accepted: true, requires_human_disposition: true, operational_endpoints_invoked: 0 }
   }
   return { ok: false, error: 'Unsupported investigation tool.' }
 }
@@ -119,9 +125,9 @@ export async function investigateAlert(event) {
   const state = { inspected: new Set(), readPortState: false, ragUsed: false, sopReferences: [], trace: [], proposal: null }
   const signalSummary = event.signals.map(({ id, label, preview }) => ({ id, label, preview }))
   const endpointCatalog = publicToolCatalog().map(({ id, number, name, endpoint, description }) => ({ id, number, name, endpoint, description }))
-  const instructions = `You are a PSA port alert investigation agent operating behind two mandatory human approval gates. The operator has already verified and forwarded one or more alerts. Investigate every incident in the batch, the observable signals, and current port state, then propose the minimum sufficient combined set of operational tool endpoints. Explicitly acknowledge how many incidents are present and explain each one. Do not execute operational actions. Inspect at least two relevant signals, read current port state, trace relevant safety or operational dependencies, and call search_sop_playbook before submitting a recommendation. Treat retrieved SOP passages as operational guidance and cite their SOP identifiers in your reasoning. Use the exact endpoint IDs from the supplied catalog. State what should happen, why, and which endpoints should be invoked only if a human later approves. Never claim that an endpoint has run. Propose only immediate containment actions: do not add optional follow-up endpoints.`
+  const instructions = `You are a PSA port alert investigation agent operating behind mandatory human disposition and execution gates. The operator has acknowledged and forwarded one or more candidate alerts; they have not yet confirmed that an incident is real. Investigate every alert in the batch, the observable signals, and current port state. Classify the overall batch as confirmed, false_alarm, or inconclusive. A confirmed classification requires corroborating evidence. Use false_alarm when evidence shows a nuisance or invalid alert, and inconclusive when available evidence cannot safely confirm or dismiss it. Explicitly acknowledge how many alerts are present and explain each one. Do not execute operational actions. Inspect at least two relevant signals, read current port state, trace relevant safety or operational dependencies, and call search_sop_playbook before submitting an assessment. Treat retrieved SOP passages as operational guidance and cite their SOP identifiers in your reasoning. Only a confirmed incident may propose operational tool endpoints; false_alarm and inconclusive classifications must submit an empty tool_ids array. For a confirmed incident, propose the minimum sufficient combined endpoint set. State what should happen, why, and which endpoints should be invoked only if a human later confirms the incident and separately approves recovery. Never claim that an endpoint has run.`
   const incidents = (event.events || [event]).map((incident) => ({ object: incident.object, label: incident.label }))
-  const input = [{ role: 'user', content: JSON.stringify({ verified_alert_batch: { incident_count: incidents.length, incidents }, observable_signals: signalSummary, operational_endpoint_catalog: endpointCatalog }) }]
+  const input = [{ role: 'user', content: JSON.stringify({ candidate_alert_batch: { alert_count: incidents.length, alerts: incidents }, observable_signals: signalSummary, operational_endpoint_catalog: endpointCatalog }) }]
 
   let response = await client.responses.create({ model: process.env.OPENAI_MODEL || 'gpt-5.4-mini', instructions, tools: investigationTools, tool_choice: 'required', input })
   for (let turn = 0; turn < 16; turn += 1) {
@@ -134,7 +140,7 @@ export async function investigateAlert(event) {
     }
     if (state.proposal) break
     if (turn === 11) {
-      input.push({ role: 'user', content: 'Conclude the investigation now. Use the evidence and retrieved SOP procedures already available, then call submit_recommendation with the exact minimum combined operational endpoint set for every incident in the batch.' })
+      input.push({ role: 'user', content: 'Conclude the investigation now. Classify the candidate alert using the evidence and retrieved SOP procedures, then call submit_recommendation. Only include the exact minimum combined operational endpoint set when the incident is confirmed.' })
     }
     response = await client.responses.create({ model: process.env.OPENAI_MODEL || 'gpt-5.4-mini', instructions, tools: investigationTools, tool_choice: 'required', input })
   }
@@ -148,6 +154,7 @@ export async function investigateAlert(event) {
   const publicTools = state.proposal.tool_ids.map((id) => publicToolCatalog().find((tool) => tool.id === id)).filter(Boolean)
   return {
     mode: 'openai',
+    classification: state.proposal.classification,
     diagnosis: state.proposal.diagnosis,
     confidence: state.proposal.confidence,
     evidence: state.proposal.evidence,

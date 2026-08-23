@@ -1,6 +1,6 @@
 # PSA Port Resilience Simulator
 
-An interactive React prototype for a PSA hackathon. The port map feeds a human-governed alert control station: an operator verifies probable incidents, an AI agent investigates telemetry and current port state, the operator reviews and approves its recommendation, and only then can the agent invoke operational recovery endpoints.
+An interactive React prototype for a PSA hackathon. The port map feeds a human-governed alert control station: an operator acknowledges a candidate alert, an AI agent investigates and classifies it, the operator records a true/false/inconclusive disposition, and confirmed incidents require a separate recovery approval before any operational endpoint can run.
 
 ## Run locally
 
@@ -33,10 +33,11 @@ The API key is read only by the Node backend and is never sent to the browser. T
 1. Click an object on the terminal map, choose a disruption, set its time, and select **Insert on timeline**. Add as many incidents as needed across the 06:00–22:00 simulation day.
 2. Choose a simulation speed (**0.5×**, **1×**, **2×**, or **4×**) and select **Play simulation**. At 1× the clock advances by 15 simulated minutes every two seconds; every speed automatically pauses whenever alerts arrive, leaving unlimited real time for operator review and the LLM response.
 3. Multiple disruptions can share the same timestamp. Their markers stack on the timeline and they are released as one visible incident batch, while retaining each affected asset and signal set.
-4. Review the clock-released probable alert batch in **Live alert intake**. No AI or operational endpoint is called yet.
-5. Select **Verify & send to agent**. All simultaneous incidents are sent together. The agent inspects signals from each issue and current port state, then retrieves relevant guidance from the SOP playbook before proposing one minimum-safe combined endpoint plan.
-6. Review the diagnosis, cited SOP passages, recommendation, and proposed endpoints. They remain marked **Not invoked**.
-7. Select **Approve recovery**. Only the approved combined endpoint set is dispatched, and each result appears in **Operational tool execution**.
+4. Review the clock-released candidate alert batch in **Live alert intake**. No AI or operational endpoint is called yet.
+5. Select **Acknowledge & investigate**. All simultaneous alerts are sent together. The agent inspects signals and current port state, retrieves relevant SOP guidance, then classifies the batch as **confirmed**, **false alarm**, or **inconclusive**.
+6. Review the diagnosis, evidence, confidence, and cited SOP passages. Record a human disposition with **Confirm incident**, **Mark false alarm**, or **Request inspection**.
+7. Confirmed incidents expose the recovery proposal behind a separate **Approve & execute** gate. False alarms close with no endpoints, while inconclusive alerts stop for further inspection.
+8. Only the approved combined endpoint set is dispatched, and each result appears in **Operational tool execution**.
 
 Open **Agent chat** in the left navigation to see the actual system release, operator request, LLM response, proposed tools, approval message, and recovery result. The side panel keeps the complete active incident batch visible throughout the conversation.
 
@@ -54,7 +55,7 @@ For example, toppled containers on a vessel require exactly Tool 01 (`POST /tool
 - `server/sop-playbook.js` chunks and retrieves relevant SOP sections with a self-contained lexical RAG index for this MVP.
 - `server/agent.js` runs a diagnostic-only OpenAI Responses API function-calling loop, requires the SOP RAG call, and returns a grounded proposal for human approval.
 - `server/tool-runtime.js` defines the simulated operational endpoints and executes only the approved, validated tool plan.
-- `server/index.js` separates investigation (`POST /api/agent/investigate`) from approved execution (`POST /api/agent/execute`) and exposes playbook status at `GET /api/playbook/status`.
+- `server/index.js` separates investigation (`POST /api/agent/investigate`), human disposition (`POST /api/agent/disposition`), and approved execution (`POST /api/agent/execute`) and exposes playbook status at `GET /api/playbook/status`.
 
 The local retriever keeps the demo portable and auditable. It can later be replaced by a hosted vector store and file-search tool without changing the human approval or endpoint execution gates.
 
