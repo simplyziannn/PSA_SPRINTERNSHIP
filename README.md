@@ -145,7 +145,15 @@ For the Docker container:
 docker exec psa-port-simulator node scripts/call-all-tools.js
 ```
 
-The latest endpoint states are available at `GET /api/tools/activity`.
+The latest endpoint states are available at `GET /api/tools/activity`. After the latest tool completion, the browser keeps the green lamps visible for four seconds and then calls `POST /api/tools/activity/reset`. Any new completion restarts this timer.
+
+Reset all activity lights immediately:
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/tools/activity/reset \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"manual demo reset"}'
+```
 
 ## API overview
 
@@ -156,6 +164,7 @@ The latest endpoint states are available at `GET /api/tools/activity`.
 | `GET` | `/api/playbook/status` | Local RAG playbook status |
 | `GET` | `/api/tool-events` | Live Server-Sent Events stream |
 | `GET` | `/api/tools/activity` | Latest activity for all invoked tools |
+| `POST` | `/api/tools/activity/reset` | Clear all activity lamps and broadcast the reset |
 | `POST` | `/api/agent/investigate` | Investigate and classify candidate alerts |
 | `POST` | `/api/agent/disposition` | Record the human alert disposition |
 | `POST` | `/api/agent/execute` | Execute an approved confirmed recovery |

@@ -66,9 +66,13 @@ export const toolCatalog = {
 const activitySubscribers = new Set()
 const latestActivityByTool = new Map()
 
+function broadcastToolActivity(activity) {
+  for (const subscriber of activitySubscribers) subscriber(activity)
+}
+
 function publishToolActivity(activity) {
   latestActivityByTool.set(activity.id, activity)
-  for (const subscriber of activitySubscribers) subscriber(activity)
+  broadcastToolActivity(activity)
 }
 
 export function subscribeToolActivity(subscriber) {
@@ -78,6 +82,13 @@ export function subscribeToolActivity(subscriber) {
 
 export function currentToolActivity() {
   return [...latestActivityByTool.values()]
+}
+
+export function resetToolActivity(reason = 'manual') {
+  latestActivityByTool.clear()
+  const reset = { type: 'reset', reason, resetAt: new Date().toISOString() }
+  broadcastToolActivity(reset)
+  return reset
 }
 
 export async function invokeOperationalTool(id, { source = 'external', context = null } = {}) {

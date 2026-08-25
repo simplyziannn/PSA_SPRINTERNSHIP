@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { investigateAlert } from './agent.js'
 import { buildEvent } from './events.js'
-import { currentToolActivity, executeToolPlan, invokeOperationalTool, publicToolCatalog, subscribeToolActivity } from './tool-runtime.js'
+import { currentToolActivity, executeToolPlan, invokeOperationalTool, publicToolCatalog, resetToolActivity, subscribeToolActivity } from './tool-runtime.js'
 import { getPlaybookEntries, getPlaybookStatus } from './sop-playbook.js'
 
 const app = express()
@@ -32,6 +32,11 @@ app.get('/api/tools/activity', (_request, response) => {
   response.json({ ok: true, activities: currentToolActivity() })
 })
 
+app.post('/api/tools/activity/reset', (request, response) => {
+  const reset = resetToolActivity(request.body?.reason || 'manual API request')
+  response.json({ ok: true, ...reset, activities: [] })
+})
+
 app.get('/api/tool-events', (request, response) => {
   response.set({
     'Content-Type': 'text/event-stream',
@@ -42,7 +47,8 @@ app.get('/api/tool-events', (request, response) => {
   response.flushHeaders()
   response.write(`event: snapshot\ndata: ${JSON.stringify(currentToolActivity())}\n\n`)
   const unsubscribe = subscribeToolActivity((activity) => {
-    response.write(`event: tool-activity\ndata: ${JSON.stringify(activity)}\n\n`)
+    const eventName = activity.type === 'reset' ? 'tool-reset' : 'tool-activity'
+    response.write(`event: ${eventName}\ndata: ${JSON.stringify(activity)}\n\n`)
   })
   const heartbeat = setInterval(() => response.write(': keep-alive\n\n'), 15000)
   request.on('close', () => {
