@@ -1,62 +1,181 @@
 # PSA Port Resilience Simulator
 
-An interactive React prototype for a PSA hackathon. The port map feeds a human-governed alert control station: an operator acknowledges a candidate alert, an AI agent investigates and classifies it, the operator records a true/false/inconclusive disposition, and confirmed incidents require a separate recovery approval before any operational endpoint can run.
+An interactive React and Express prototype for a human-governed port incident workflow. An operator acknowledges a candidate alert, an AI agent investigates and classifies it, the operator records a confirmed/false-alarm/inconclusive disposition, and confirmed incidents require separate recovery approval before operational endpoints run.
 
-## Run locally
+## Prerequisites
 
-1. Install the dependencies:
+Choose either the local Node.js setup or Docker:
 
-   ```bash
-   npm install
-   ```
+- **Local:** Node.js 22 LTS or newer and npm (included with Node.js).
+- **Docker:** Docker Desktop or Docker Engine with the `docker` CLI.
+- **Both:** An OpenAI API key with access to the model configured by `OPENAI_MODEL`.
 
-2. Add your OpenAI API key to `.env`:
+The application will start without an API key, but agent investigations return an error until a valid `OPENAI_API_KEY` is configured. The key is read only by the Express backend and is never sent to the browser.
 
-   ```dotenv
-   OPENAI_API_KEY=your_api_key_here
-   OPENAI_MODEL=gpt-5.4-mini
-   API_PORT=8787
-   ```
+## Environment configuration
 
-3. Start the React app and API together:
+Copy `.env.example` to `.env`:
 
-   ```bash
-   npm run dev
-   ```
+```bash
+cp .env.example .env
+```
 
-4. Open the local URL printed by Vite (normally `http://localhost:5173`).
+On Windows PowerShell:
 
-The API key is read only by the Node backend and is never sent to the browser. The recovery workflow requires a configured key so that successful incidents always represent a real agent investigation rather than a prefilled expected answer.
+```powershell
+Copy-Item .env.example .env
+```
 
-## Demo flow
+Then update `.env`:
 
-1. Click an object on the terminal map, choose a disruption, set its time, and select **Insert on timeline**. Add as many incidents as needed across the 06:00–22:00 simulation day.
-2. Choose a simulation speed (**0.5×**, **1×**, **2×**, or **4×**) and select **Play simulation**. At 1× the clock advances by 15 simulated minutes every two seconds; every speed automatically pauses whenever alerts arrive, leaving unlimited real time for operator review and the LLM response.
-3. Multiple disruptions can share the same timestamp. Their markers stack on the timeline and they are released as one visible incident batch, while retaining each affected asset and signal set.
-4. Review the clock-released candidate alert batch in **Live alert intake**. No AI or operational endpoint is called yet.
-5. Select **Acknowledge & investigate**. All simultaneous alerts are sent together. The agent inspects signals and current port state, retrieves relevant SOP guidance, then classifies the batch as **confirmed**, **false alarm**, or **inconclusive**.
-6. Review the diagnosis, evidence, confidence, and cited SOP passages. Record a human disposition with **Confirm incident**, **Mark false alarm**, or **Request inspection**.
-7. Confirmed incidents expose the recovery proposal behind a separate **Approve & execute** gate. False alarms close with no endpoints, while inconclusive alerts stop for further inspection.
-8. Only the approved combined endpoint set is dispatched, and each result appears in **Operational tool execution**.
+```dotenv
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-5.4-mini
+API_PORT=8787
+API_HOST=127.0.0.1
+```
 
-Open **Agent chat** in the left navigation to see the actual system release, operator request, LLM response, proposed tools, approval message, and recovery result. The side panel keeps the complete active incident batch visible throughout the conversation.
+Do not commit `.env`. It is excluded from the Docker build context as well.
 
-The **Agent activity board** is an industrial-style annunciator panel driven by recorded actions rather than an animation script. Alert intake, telemetry, port-state reads, SOP RAG retrieval, and human approval illuminate only while those stages are active. All twelve operational channels remain dark until proposed; proposed tools receive an amber ring, and only invoked endpoints illuminate green. The adjacent readout links the selected tools to the retrieved SOP and shows whether the plan matches.
+## Run locally without Docker
 
-The left navigation contains only **Control station**, **Agent chat**, and **SOP playbook**. The playbook tab exposes all eight RAG procedures, their trigger signals, mandatory immediate tools, and a live `MATCHED`, `INCOMPLETE`, or `NOT ACTIVE` comparison against the agent’s plan and executed endpoints.
+### Development mode
 
-For example, toppled containers on a vessel require exactly Tool 01 (`POST /tools/stop-lifts`) and Tool 04 (`POST /tools/establish-exclusion-zone`). The execution API rejects requests without explicit human approval and rejects over-broad or incomplete tool combinations.
+Install the exact locked dependencies:
+
+```bash
+npm ci
+```
+
+Start the Vite frontend and Express backend together:
+
+```bash
+npm run dev
+```
+
+Open `http://localhost:5173`. During development, Vite proxies `/api` requests to the backend at `http://127.0.0.1:8787`.
+
+If either port is already in use, stop the previous development process before restarting. Vite hot-reloads frontend changes, but backend changes require the Node process to restart.
+
+### Local production mode
+
+Build the frontend and serve it from Express:
+
+```bash
+npm ci
+npm run build
+npm start
+```
+
+Open `http://localhost:8787`.
+
+## Run with Docker
+
+Build the image from the repository root:
+
+```bash
+docker build -t psa-port-resilience-simulator .
+```
+
+Run the container using your local `.env` file:
+
+```bash
+docker run --rm --name psa-port-simulator \
+  --env-file .env \
+  -e API_HOST=0.0.0.0 \
+  -p 8787:8787 \
+  psa-port-resilience-simulator
+```
+
+On Windows PowerShell, the same command is:
+
+```powershell
+docker run --rm --name psa-port-simulator `
+  --env-file .env `
+  -e API_HOST=0.0.0.0 `
+  -p 8787:8787 `
+  psa-port-resilience-simulator
+```
+
+Open `http://localhost:8787`.
+
+The explicit `API_HOST=0.0.0.0` is required inside Docker so the application is reachable through the published port. The container includes a health check against `/api/health`.
+
+Useful Docker commands:
+
+```bash
+docker ps
+docker logs -f psa-port-simulator
+docker stop psa-port-simulator
+```
+
+## Demo workflow
+
+1. Select a port object, choose a disruption, select its time, and insert it on the timeline.
+2. Play the simulation until the candidate alert is released.
+3. Select **Acknowledge & investigate**.
+4. Review the agent classification, evidence, confidence, and SOP references.
+5. Select **Confirm incident**, **Mark false alarm**, or **Request inspection**.
+6. For confirmed incidents, separately select **Approve & execute**.
+7. Review the real-time endpoint activity and execution output.
+
+False alarms close without operational actions. Inconclusive alerts stop for further inspection. Confirmed incidents expose only the minimum validated recovery plan.
+
+## Live operational endpoint demo
+
+All twelve `/tools/*` entries are real POST routes. The control station subscribes to `GET /api/tool-events` using Server-Sent Events. Invoking channels pulse blue and completed channels remain green, whether the call originated from the agent workflow or an external API client.
+
+Every direct operational call requires an explicit approval flag:
+
+```bash
+curl -X POST http://127.0.0.1:8787/tools/stop-lifts \
+  -H "Content-Type: application/json" \
+  -d '{"approved":true,"context":{"purpose":"live demo"}}'
+```
+
+With the application running and the control station open, call all twelve endpoints sequentially:
+
+```bash
+npm run demo:tools
+```
+
+For the Docker container:
+
+```bash
+docker exec psa-port-simulator node scripts/call-all-tools.js
+```
+
+The latest endpoint states are available at `GET /api/tools/activity`.
+
+## API overview
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/health` | Health, model, and agent-mode status |
+| `GET` | `/api/playbook` | Public SOP and operational tool catalog |
+| `GET` | `/api/playbook/status` | Local RAG playbook status |
+| `GET` | `/api/tool-events` | Live Server-Sent Events stream |
+| `GET` | `/api/tools/activity` | Latest activity for all invoked tools |
+| `POST` | `/api/agent/investigate` | Investigate and classify candidate alerts |
+| `POST` | `/api/agent/disposition` | Record the human alert disposition |
+| `POST` | `/api/agent/execute` | Execute an approved confirmed recovery |
+| `POST` | `/tools/*` | Invoke an explicitly approved operational tool |
 
 ## Architecture
 
-- `src/App.jsx` renders the interactive terminal, timed simulation day, alert control station, activity lights, human gates, and audit log.
-- `server/events.js` defines object-specific disruptions, emitted signals, hidden diagnoses, and the minimum safe tool sets used by the simulator validator.
-- `docs/PSA-SOP-PLAYBOOK.md` is the versioned source document for eight incident-response procedures and their minimum immediate tool plans.
-- `server/sop-playbook.js` chunks and retrieves relevant SOP sections with a self-contained lexical RAG index for this MVP.
-- `server/agent.js` runs a diagnostic-only OpenAI Responses API function-calling loop, requires the SOP RAG call, and returns a grounded proposal for human approval.
-- `server/tool-runtime.js` defines the simulated operational endpoints and executes only the approved, validated tool plan.
-- `server/index.js` separates investigation (`POST /api/agent/investigate`), human disposition (`POST /api/agent/disposition`), and approved execution (`POST /api/agent/execute`) and exposes playbook status at `GET /api/playbook/status`.
+- `src/App.jsx` renders the terminal simulator, alert workflow, activity board, human gates, and audit timeline.
+- `server/index.js` exposes the API, operational routes, SSE activity stream, and production frontend.
+- `server/agent.js` runs the OpenAI Responses API investigation and tool-selection loop.
+- `server/events.js` defines incident signals, expected classifications, and minimum-safe tool sets.
+- `server/tool-runtime.js` validates recovery plans and emits real-time operational activity.
+- `server/sop-playbook.js` provides the local lexical RAG index.
+- `docs/PSA-SOP-PLAYBOOK.md` is the versioned operational playbook source.
+- `Dockerfile` builds the Vite frontend and creates the production Node.js image.
 
-The local retriever keeps the demo portable and auditable. It can later be replaced by a hosted vector store and file-search tool without changing the human approval or endpoint execution gates.
+## Troubleshooting
 
-For a production build, run `npm run build`, then `npm start`.
+- **Blank or outdated UI after code changes:** stop all old `npm run dev` processes, restart the command, and refresh the browser.
+- **Agent investigation fails:** verify `OPENAI_API_KEY` and `OPENAI_MODEL` in `.env`.
+- **Docker page is unreachable:** confirm port `8787` is published and `API_HOST` is `0.0.0.0` inside the container.
+- **Port already in use:** stop the previous local process/container or choose another host mapping, such as `-p 8790:8787`.
+- **Endpoint stream reconnecting:** confirm the backend is running and `/api/tool-events` is reachable through the same application origin.

@@ -199,7 +199,7 @@ function IncidentFocus({ phase, activeEvent, proposal }) {
   return <section className={`incident-focus ${activeEvent.severity}`} aria-label="Current incident focus"><div className="incident-focus-main"><div className="incident-focus-meta"><span>CURRENT INCIDENT</span><b>{activeEvent.severity === 'critical' ? 'CRITICAL' : activeEvent.severity === 'warning' ? 'WARNING' : 'ADVISORY'}</b><time>{activeEvent.time}</time></div><h2>{activeEvent.label}</h2><p>{focusLabel || `${incidents.length} affected assets`} · {incidents.length} incident{incidents.length === 1 ? '' : 's'} in current response</p></div><div className="incident-focus-response"><span>RESPONSE STATUS</span><strong>{proposal?.recommendation || state}</strong>{proposal?.confidence ? <small>{Math.round(proposal.confidence * 100)}% agent confidence</small> : <small>Human-governed response workflow</small>}</div></section>
 }
 
-function AgentActivityBoard({ phase, activeEvent, proposal, execution, playbook, onOpenPlaybook }) {
+function AgentActivityBoard({ phase, activeEvent, proposal, execution, playbook, toolActivity, toolStreamState, onOpenPlaybook }) {
   const [showTechnical, setShowTechnical] = useState(false)
   const trace = proposal?.trace || []
   const called = (type) => trace.some((item) => item.type === type)
@@ -212,16 +212,22 @@ function AgentActivityBoard({ phase, activeEvent, proposal, execution, playbook,
   ]
   const proposedIds = new Set(proposal?.proposedTools?.map((tool) => tool.id) || [])
   const invokedIds = new Set(execution?.executions?.filter((tool) => tool.status === 'completed').map((tool) => tool.id) || [])
+  const latestToolActivity = Object.values(toolActivity).toSorted((left, right) => (left.invokedAt || left.startedAt).localeCompare(right.invokedAt || right.startedAt)).at(-1)
+  useEffect(() => { if (latestToolActivity?.invocationId) setShowTechnical(true) }, [latestToolActivity?.invocationId])
   const activeSopIds = new Set(proposal?.sopReferences?.map((reference) => reference.id) || [])
   const tools = playbook.tools.length ? playbook.tools : Array.from({ length: 12 }, (_, index) => ({ id: `tool_${String(index + 1).padStart(2, '0')}`, number: String(index + 1).padStart(2, '0'), name: 'Operational channel' }))
   const matchedSops = playbook.entries.filter((entry) => activeSopIds.has(entry.id))
   const activityTitle = phase === 'idle' ? 'System ready' : phase === 'alert' ? 'Operator acknowledgement required' : phase === 'analyzing' ? 'Agent assessing candidate alert' : phase === 'assessment' ? 'Human disposition required' : phase === 'proposal' ? 'Recovery approval required' : phase === 'executing' ? 'Approved recovery executing' : phase === 'complete' ? 'Incident contained' : phase === 'false_alarm' ? 'False alarm closed' : phase === 'inspection_requested' ? 'Further inspection requested' : phase === 'rejected' ? 'Recovery declined' : 'Response needs attention'
   const activityDetail = activeEvent ? `${activeEvent.label} · ${activeEvent.object?.label || `${activeEvent.events?.length || 1} affected assets`}` : 'Monitoring telemetry and awaiting alerts.'
-  return <section className={`annunciator-board ${showTechnical ? 'technical-open' : ''}`} aria-label="Agent activity board"><header><div><span>AGENT ACTIVITY</span><h3>{activeEvent ? 'Incident response activity' : 'System activity'}</h3></div><div className="board-header-actions"><div className="board-legend"><span><i className="blue"/>Normal</span><span><i className="amber"/>Attention</span><span><i className="green"/>Complete</span><span><i className="red"/>Incident</span></div><button className="technical-toggle" onClick={() => setShowTechnical((value) => !value)} aria-expanded={showTechnical}>{showTechnical ? 'Hide technical details' : 'View technical details'} <span>{showTechnical ? '⌃' : '⌄'}</span></button></div></header>{showTechnical ? <div className="board-surface"><div className="process-bank">{processLights.map((node) => <article key={node.key} className={`board-channel ${node.lit ? 'lit' : ''} ${node.tone}`}><div><strong>{node.label}</strong><small>{node.detail}</small></div><i className="board-lamp" aria-label={`${node.label}: ${node.lit ? 'active' : 'inactive'}`}/></article>)}</div><div className="tool-bank"><div className="bank-label"><span>OPERATIONAL TOOL CHANNELS</span><small>Green = completed · Amber = proposed</small></div>{tools.map((tool) => {
+  return <section className={`annunciator-board ${showTechnical ? 'technical-open' : ''}`} aria-label="Agent activity board"><header><div><span>AGENT ACTIVITY</span><h3>{activeEvent ? 'Incident response activity' : 'System activity'}</h3></div><div className="board-header-actions"><span className={`endpoint-stream ${toolStreamState}`}><i/> Endpoint stream {toolStreamState}</span><div className="board-legend"><span><i className="blue"/>Normal</span><span><i className="amber"/>Attention</span><span><i className="green"/>Complete</span><span><i className="red"/>Incident</span></div><button className="technical-toggle" onClick={() => setShowTechnical((value) => !value)} aria-expanded={showTechnical}>{showTechnical ? 'Hide technical details' : 'View technical details'} <span>{showTechnical ? '⌃' : '⌄'}</span></button></div></header>{showTechnical ? <div className="board-surface"><div className="process-bank">{processLights.map((node) => <article key={node.key} className={`board-channel ${node.lit ? 'lit' : ''} ${node.tone}`}><div><strong>{node.label}</strong><small>{node.detail}</small></div><i className="board-lamp" aria-label={`${node.label}: ${node.lit ? 'active' : 'inactive'}`}/></article>)}</div><div className="tool-bank"><div className="bank-label"><span>OPERATIONAL TOOL CHANNELS</span><small>Green = completed · Amber = proposed · Blue = invoking</small></div>{tools.map((tool) => {
     const linkedSops = matchedSops.filter((entry) => entry.toolIds.includes(tool.id))
-    const invoked = invokedIds.has(tool.id) || (phase === 'executing' && proposedIds.has(tool.id))
-    const armed = proposedIds.has(tool.id) && !invoked
-    return <article key={tool.id} className={`tool-channel ${invoked ? 'lit' : ''} ${armed ? 'armed' : ''}`}><i className="board-lamp" aria-label={`Tool ${tool.number}: ${invoked ? 'invoked' : armed ? 'proposed' : 'inactive'}`}/><div><strong>TOOL {tool.number}</strong><span>{tool.name}</span><small>{linkedSops.length ? linkedSops.map((entry) => entry.id).join(' · ') : 'No active SOP link'}</small></div></article>
+    const liveActivity = toolActivity[tool.id]
+    const invoked = invokedIds.has(tool.id) || liveActivity?.status === 'completed'
+    const invoking = liveActivity?.status === 'invoking' || (phase === 'executing' && proposedIds.has(tool.id) && !invoked)
+    const armed = proposedIds.has(tool.id) && !invoked && !invoking
+    const status = invoked ? 'completed' : invoking ? 'invoking' : armed ? 'proposed' : 'inactive'
+    const source = liveActivity?.source === 'external' ? 'External API' : liveActivity?.source === 'agent' ? 'Agent execution' : null
+    return <article key={tool.id} className={`tool-channel ${invoked ? 'lit' : ''} ${invoking ? 'invoking' : ''} ${armed ? 'armed' : ''}`}><i className="board-lamp" aria-label={`Tool ${tool.number}: ${status}`}/><div><strong>TOOL {tool.number}</strong><span>{tool.name}</span><small>{source ? `${source} · ${status}` : linkedSops.length ? linkedSops.map((entry) => entry.id).join(' · ') : 'No active SOP link'}</small></div></article>
   })}</div><aside className="sop-match-readout"><span>CURRENT INCIDENT / SOP MATCH</span>{matchedSops.length ? matchedSops.map((entry) => {
     const selected = entry.toolIds.filter((id) => proposedIds.has(id))
     const matched = selected.length === entry.toolIds.length
@@ -327,6 +333,8 @@ function App() {
   const [playbackRate, setPlaybackRate] = useState(1)
   const [scheduledEvents, setScheduledEvents] = useState([])
   const [playbook, setPlaybook] = useState({ entries: [], tools: [] })
+  const [toolActivity, setToolActivity] = useState({})
+  const [toolStreamState, setToolStreamState] = useState('connecting')
   const [logs, setLogs] = useState(() => [makeLog('Live port alert monitoring started', 'green')])
   const [chatMessages, setChatMessages] = useState(() => [{ id: crypto.randomUUID(), role: 'system', time: formatSimTime(DAY_START), body: 'Agent gateway ready. No alert data has been sent.' }])
 
@@ -342,6 +350,22 @@ function App() {
       if (!cancelled && payload.ok) setPlaybook({ entries: payload.entries || [], tools: payload.tools || [] })
     }).catch(() => {})
     return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    const stream = new EventSource('/api/tool-events')
+    stream.onopen = () => setToolStreamState('live')
+    stream.onerror = () => setToolStreamState('reconnecting')
+    stream.addEventListener('snapshot', (event) => {
+      const activities = JSON.parse(event.data)
+      setToolActivity(Object.fromEntries(activities.map((activity) => [activity.id, activity])))
+    })
+    stream.addEventListener('tool-activity', (event) => {
+      const activity = JSON.parse(event.data)
+      setToolActivity((current) => ({ ...current, [activity.id]: activity }))
+      setLogs((current) => [...current, makeLog(`Tool ${activity.number} ${activity.status} via ${activity.source === 'external' ? 'external API' : 'agent execution'}`, activity.status === 'completed' ? 'green' : 'blue')])
+    })
+    return () => stream.close()
   }, [])
 
   useEffect(() => { if (currentMinute >= DAY_END) setPlaying(false) }, [currentMinute])
@@ -461,7 +485,7 @@ function App() {
   const activeAlertCount = ['complete', 'false_alarm', 'inspection_requested'].includes(phase) ? queuedAlerts : Math.max(queuedAlerts, activeEvent?.events?.length || (activeEvent ? 1 : 0))
   const togglePanel = () => setPanelOpen((value) => !value)
   const setView = (view) => { setActiveView(view); setPanelOpen(false) }
-  return <div className="app-shell"><Sidebar activeView={activeView} setActiveView={setView} alertCount={activeAlertCount}/><main className="main-area"><Header phase={phase} onOpenPanel={activeView === 'overview' ? togglePanel : null} panelOpen={panelOpen} currentMinute={currentMinute} queuedAlerts={queuedAlerts}/>{activeView === 'chat' ? <AgentChat phase={phase} activeEvent={activeEvent} proposal={proposal} execution={execution} messages={chatMessages} onBack={() => setView('overview')}/> : activeView === 'playbook' ? <SopPlaybook playbook={playbook} proposal={proposal} execution={execution} onBack={() => setView('overview')}/> : activeView === 'audit' ? <AuditView logs={logs}/> : <><ControlStationDrawer open={panelOpen} onClose={() => setPanelOpen(false)} phase={phase} activeEvent={activeEvent} queuedAlerts={queuedAlerts} currentMinute={currentMinute} playing={playing} playbackRate={playbackRate} scheduledEvents={scheduledEvents} onToggle={() => setPlaying((value) => !value)} onReset={resetDay} onRateChange={setPlaybackRate} onOpenAlert={openAlert}/><IncidentFocus phase={phase} activeEvent={activeEvent} proposal={proposal}/><AgentActivityBoard phase={phase} activeEvent={activeEvent} proposal={proposal} execution={execution} playbook={playbook} onOpenPlaybook={() => setView('playbook')}/><div className="control-layout"><div className="map-column"><PortMap selectedObject={selectedObject} activeEvent={activeEvent} phase={phase} onSelect={selectObject}/><EventDrawer selectedObject={selectedObject} activeEvent={activeEvent} onSchedule={scheduleDisruption}/></div><div className="workflow-rail"><StageStepper phase={phase}/><AlertIntake phase={phase} activeEvent={activeEvent} onAcknowledge={acknowledgeAndInvestigate}/><AgentAssessment phase={phase} proposal={proposal} error={error} onRetry={acknowledgeAndInvestigate}/><DispositionPanel phase={phase} proposal={proposal} onDisposition={submitDisposition} error={error}/><ApprovalPanel phase={phase} proposal={proposal} onApprove={approveRecovery} onReject={rejectRecovery}/><ToolExecution phase={phase} proposal={proposal} execution={execution}/></div></div></>}</main></div>
+  return <div className="app-shell"><Sidebar activeView={activeView} setActiveView={setView} alertCount={activeAlertCount}/><main className="main-area"><Header phase={phase} onOpenPanel={activeView === 'overview' ? togglePanel : null} panelOpen={panelOpen} currentMinute={currentMinute} queuedAlerts={queuedAlerts}/>{activeView === 'chat' ? <AgentChat phase={phase} activeEvent={activeEvent} proposal={proposal} execution={execution} messages={chatMessages} onBack={() => setView('overview')}/> : activeView === 'playbook' ? <SopPlaybook playbook={playbook} proposal={proposal} execution={execution} onBack={() => setView('overview')}/> : activeView === 'audit' ? <AuditView logs={logs}/> : <><ControlStationDrawer open={panelOpen} onClose={() => setPanelOpen(false)} phase={phase} activeEvent={activeEvent} queuedAlerts={queuedAlerts} currentMinute={currentMinute} playing={playing} playbackRate={playbackRate} scheduledEvents={scheduledEvents} onToggle={() => setPlaying((value) => !value)} onReset={resetDay} onRateChange={setPlaybackRate} onOpenAlert={openAlert}/><IncidentFocus phase={phase} activeEvent={activeEvent} proposal={proposal}/><AgentActivityBoard phase={phase} activeEvent={activeEvent} proposal={proposal} execution={execution} playbook={playbook} toolActivity={toolActivity} toolStreamState={toolStreamState} onOpenPlaybook={() => setView('playbook')}/><div className="control-layout"><div className="map-column"><PortMap selectedObject={selectedObject} activeEvent={activeEvent} phase={phase} onSelect={selectObject}/><EventDrawer selectedObject={selectedObject} activeEvent={activeEvent} onSchedule={scheduleDisruption}/></div><div className="workflow-rail"><StageStepper phase={phase}/><AlertIntake phase={phase} activeEvent={activeEvent} onAcknowledge={acknowledgeAndInvestigate}/><AgentAssessment phase={phase} proposal={proposal} error={error} onRetry={acknowledgeAndInvestigate}/><DispositionPanel phase={phase} proposal={proposal} onDisposition={submitDisposition} error={error}/><ApprovalPanel phase={phase} proposal={proposal} onApprove={approveRecovery} onReject={rejectRecovery}/><ToolExecution phase={phase} proposal={proposal} execution={execution}/></div></div></>}</main></div>
 }
 
 export default App

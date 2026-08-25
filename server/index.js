@@ -5,11 +5,12 @@ import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { investigateAlert } from './agent.js'
 import { buildEvent } from './events.js'
-import { executeToolPlan, publicToolCatalog } from './tool-runtime.js'
+import { currentToolActivity, executeToolPlan, invokeOperationalTool, publicToolCatalog, subscribeToolActivity } from './tool-runtime.js'
 import { getPlaybookEntries, getPlaybookStatus } from './sop-playbook.js'
 
 const app = express()
 const port = Number(process.env.API_PORT || 8787)
+const host = process.env.API_HOST || '127.0.0.1'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const pendingProposals = new Map()
 
@@ -26,6 +27,44 @@ app.get('/api/playbook/status', (_request, response) => {
 app.get('/api/playbook', (_request, response) => {
   response.json({ ok: true, entries: getPlaybookEntries(), tools: publicToolCatalog() })
 })
+
+app.get('/api/tools/activity', (_request, response) => {
+  response.json({ ok: true, activities: currentToolActivity() })
+})
+
+app.get('/api/tool-events', (request, response) => {
+  response.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  })
+  response.flushHeaders()
+  response.write(`event: snapshot\ndata: ${JSON.stringify(currentToolActivity())}\n\n`)
+  const unsubscribe = subscribeToolActivity((activity) => {
+    response.write(`event: tool-activity\ndata: ${JSON.stringify(activity)}\n\n`)
+  })
+  const heartbeat = setInterval(() => response.write(': keep-alive\n\n'), 15000)
+  request.on('close', () => {
+    clearInterval(heartbeat)
+    unsubscribe()
+  })
+})
+
+for (const tool of publicToolCatalog()) {
+  const route = tool.endpoint.replace(/^POST\s+/, '')
+  app.post(route, async (request, response) => {
+    if (request.body?.approved !== true) {
+      return response.status(400).json({ error: 'Explicit approved: true is required for a direct operational tool call.' })
+    }
+    try {
+      const execution = await invokeOperationalTool(tool.id, { source: 'external', context: request.body?.context || null })
+      return response.json({ ok: true, execution })
+    } catch (error) {
+      return response.status(error?.status || 500).json({ error: error?.message || 'Operational tool call failed.' })
+    }
+  })
+}
 
 app.post('/api/agent/investigate', async (request, response) => {
   const requestedIncidents = Array.isArray(request.body?.incidents)
@@ -118,6 +157,6 @@ app.post('/api/agent/execute', async (request, response) => {
 app.use(express.static(path.join(here, '..', 'dist')))
 app.get('*path', (_request, response) => response.sendFile(path.join(here, '..', 'dist', 'index.html')))
 
-app.listen(port, '127.0.0.1', () => {
-  console.log(`PSA agent API listening on http://127.0.0.1:${port}`)
+app.listen(port, host, () => {
+  console.log(`PSA agent API listening on http://${host}:${port}`)
 })

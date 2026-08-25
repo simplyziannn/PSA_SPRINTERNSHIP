@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 export const toolCatalog = {
   tool_01_stop_lifts: {
     number: '01', name: 'Stop adjacent lifts', endpoint: 'POST /tools/stop-lifts',
@@ -61,6 +63,40 @@ export const toolCatalog = {
   },
 }
 
+const activitySubscribers = new Set()
+const latestActivityByTool = new Map()
+
+function publishToolActivity(activity) {
+  latestActivityByTool.set(activity.id, activity)
+  for (const subscriber of activitySubscribers) subscriber(activity)
+}
+
+export function subscribeToolActivity(subscriber) {
+  activitySubscribers.add(subscriber)
+  return () => activitySubscribers.delete(subscriber)
+}
+
+export function currentToolActivity() {
+  return [...latestActivityByTool.values()]
+}
+
+export async function invokeOperationalTool(id, { source = 'external', context = null } = {}) {
+  const tool = toolCatalog[id]
+  if (!tool) {
+    const error = new Error('Unknown operational tool endpoint.')
+    error.status = 404
+    throw error
+  }
+
+  const invocationId = randomUUID()
+  const startedAt = new Date().toISOString()
+  publishToolActivity({ invocationId, id, number: tool.number, name: tool.name, endpoint: tool.endpoint, source, context, status: 'invoking', startedAt })
+  await new Promise((resolve) => setTimeout(resolve, 650))
+  const execution = { invocationId, id, ...tool, source, context, status: 'completed', startedAt, invokedAt: new Date().toISOString() }
+  publishToolActivity(execution)
+  return execution
+}
+
 export function publicToolCatalog() {
   return Object.entries(toolCatalog).map(([id, tool]) => ({ id, ...tool, output: undefined }))
 }
@@ -77,11 +113,9 @@ export async function executeToolPlan(event, proposedToolIds) {
     }
   }
 
-  const executions = []
-  for (const id of event.requiredToolIds) {
-    const tool = toolCatalog[id]
-    if (!tool) continue
-    executions.push({ id, ...tool, status: 'completed', invokedAt: new Date().toISOString() })
-  }
+  const executions = await Promise.all(event.requiredToolIds.map((id) => invokeOperationalTool(id, {
+    source: 'agent',
+    context: { affectedAsset: event.object?.label || 'Port incident', incident: event.label },
+  })))
   return { resolved: executions.length === event.requiredToolIds.length, executions }
 }
